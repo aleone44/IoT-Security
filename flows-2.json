@@ -1,0 +1,261 @@
+[
+    {
+        "id": "8ff2036cdacd5b80",
+        "type": "tab",
+        "label": "Flow 3",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "872644116f637ace",
+        "type": "http in",
+        "z": "8ff2036cdacd5b80",
+        "name": "ricezione ESP32",
+        "url": "/auth",
+        "method": "post",
+        "upload": false,
+        "skipBodyParsing": false,
+        "swaggerDoc": "",
+        "x": 380,
+        "y": 340,
+        "wires": [
+            [
+                "4c5942094a81f3be",
+                "db44776e5cf72ce8"
+            ]
+        ]
+    },
+    {
+        "id": "3bb884cae76f0327",
+        "type": "json",
+        "z": "8ff2036cdacd5b80",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 590,
+        "y": 300,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "db44776e5cf72ce8",
+        "type": "function",
+        "z": "8ff2036cdacd5b80",
+        "name": "function 1",
+        "func": "// --- 1. CONFIGURAZIONE ---\n// INSERISCI QUI LA TUA \"IMPRONTA MASTER\" (Copia la stringa binaria estratta la prima volta dall'ESP32)\nconst masterPuf = \"1011110100000100101010100110111111101011010011011101101101101101100101000010110001001100001000011010101000000010011010001111010001110010000101101111010001101110101000011110111011011110001001000011000111010101111011110001111110110110001100101001111001101110101000001110110011111100111100001111011110111111010010010101111110011110101001011000111100000000111000010100110010100111100001010111010000000010001010110101010010101011010010101110110000110001101100010000101011011010001101110011111010110101000011010100111001010011000100001100001101000010110100100100001111101011000001010110001001100011110010001110110010011001001001101001100010111011101110001011110000000001011111111001100011000010101001111011001100010111110100110100100001111011010011001010010011111100110001011011101101010001000111001010110000011000110010100000111000010000010100100010110101000001101011110101001110011010101010100010010000111000100010111011001111011010001101000101001101100100110000100110111101100000000010110011000100000000111100001011110011010110100011111011101100111010000110010000111100101111001111110100100010110110111011110100100110100111110011011110101101110110100011110111011011100111010011010100010101100100101000110011000100001111110101010110011000001011001000100001100111100110001100011101011100101100001100010110111100001011101111100001100001011111110101110111111010010010101100100111000000100001000010111110100010001100001011110101001110101111001001000110000010100101101010101100111010001000100110111101111101101001110001111001110101101001010001001000010100000001100000111000001100111010111111101011011111111000001000000100101000101000111001011100011101110110110101010100100001110110100110101010001010000000000010110110111110101011000111101100110001010011000010111101111010001101110100101010011011111010100010111001100000000010010010110101010100110001011001111110111101010110010000001000100000000100011110111001000000110110100010110001110101100101101110001010001101101000001111001100111111111000011010011110100010010101010010111001101011111010111010010101110110011001100111101101010010000110000011011111011111011101\";\nconst secretKey = CryptoJS.enc.Utf8.parse(\"SuperSegreta1234\"); // La stessa chiave dell'ESP32\n\n// --- 2. RECUPERO DATI E DECIFRATURA AES-128 ---\nconst datiCifratiHex = msg.payload.dati_sicuri;\n\nif (!datiCifratiHex) {\n    msg.payload = { stato: \"❌ ERRORE: Nessun payload cifrato ricevuto\" };\n    msg.statusCode = 400;\n    return msg;\n}\n\ntry {\n    const cipherParams = CryptoJS.lib.CipherParams.create({\n        ciphertext: CryptoJS.enc.Hex.parse(datiCifratiHex)\n    });\n\n    const decrypted = CryptoJS.AES.decrypt(cipherParams, secretKey, {\n        mode: CryptoJS.mode.ECB,\n        padding: CryptoJS.pad.Pkcs7\n    });\n\n    // Trasformiamo i byte decifrati in testo leggibile e poi in JSON\n    const datiInChiaroStr = decrypted.toString(CryptoJS.enc.Utf8);\n    const payloadOriginale = JSON.parse(datiInChiaroStr);\n\n    // --- 3. LOGICA PUF E DISTANZA DI HAMMING ---\n    const incomingPuf = payloadOriginale.puf;\n    let minLen = Math.min(masterPuf.length, incomingPuf.length);\n    let distanza = 0;\n\n    for (let i = 0; i < minLen; i++) {\n        if (masterPuf[i] !== incomingPuf[i]) {\n            distanza++;\n        }\n    }\n\n    let percentuale = (distanza / minLen) * 100;\n\n    // --- 4. OUTPUT PER LA DASHBOARD ---\n    msg.payload = {\n        messaggio: payloadOriginale.messaggio,\n        distanza_hamming: percentuale.toFixed(2) + \"%\"\n    };\n\n    if (percentuale < 55.0) {\n        msg.payload.stato = \" ACCESSO CONSENTITO (Dispositivo Autentico. Errore: \" + percentuale.toFixed(2) + \"%)\";\n        msg.statusCode = 200; // Risposta OK all'ESP32\n    } else {\n        msg.payload.stato = \" ACCESSO NEGATO (Clone rilevato! Errore: \" + percentuale.toFixed(2) + \"%)\";\n        msg.payload.messaggio = \"DATI BLOCCATI\";\n        msg.statusCode = 401; // Risposta Non Autorizzato\n    }\n\n    return msg;\n\n}  catch (error) {\n    // STAMPIAMO L'ERRORE REALE NEL DEBUG PER CAPIRE COSA SUCCEDE\n    node.error(\"ERRORE DI DECIFRATURA: \" + error.message);\n\n    msg.payload = {\n        stato: \" ATTACCO RILEVATO\",\n        messaggio: \"SCONOSCIUTO\"\n    };\n    msg.statusCode = 403;\n    return msg;\n}",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "CryptoJS",
+                "module": "crypto-js"
+            }
+        ],
+        "x": 760,
+        "y": 340,
+        "wires": [
+            [
+                "eac78817824401b6",
+                "5b1163a78df23139",
+                "e192137409c3be5c",
+                "c71383a23adc0d93"
+            ]
+        ]
+    },
+    {
+        "id": "eac78817824401b6",
+        "type": "http response",
+        "z": "8ff2036cdacd5b80",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 930,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "5b1163a78df23139",
+        "type": "ui-text",
+        "z": "8ff2036cdacd5b80",
+        "group": "4c673d60289fd95f",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "name": "",
+        "label": "Stato Autenticazione",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload.stato",
+        "valueType": "msg",
+        "x": 980,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "e192137409c3be5c",
+        "type": "ui-text",
+        "z": "8ff2036cdacd5b80",
+        "group": "4c673d60289fd95f",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "name": "",
+        "label": "Messaggio Decifrato",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload.messaggio",
+        "valueType": "msg",
+        "x": 980,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "c71383a23adc0d93",
+        "type": "debug",
+        "z": "8ff2036cdacd5b80",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 940,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "4c5942094a81f3be",
+        "type": "debug",
+        "z": "8ff2036cdacd5b80",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 470,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "4c673d60289fd95f",
+        "type": "ui-group",
+        "name": "Sicurezza IoT",
+        "page": "c858a3399cfe614c",
+        "width": 6,
+        "height": 1,
+        "order": 1,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "c858a3399cfe614c",
+        "type": "ui-page",
+        "name": "Dashboard",
+        "ui": "b8f4a9791328f42c",
+        "path": "/page1",
+        "icon": "home",
+        "layout": "grid",
+        "theme": "3879e91f08d0fed4",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 1,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "b8f4a9791328f42c",
+        "type": "ui-base",
+        "name": "My Dashboard",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 1,
+        "showDisconnectNotification": true,
+        "allowInstall": false
+    },
+    {
+        "id": "3879e91f08d0fed4",
+        "type": "ui-theme",
+        "name": "Default Theme",
+        "colors": {
+            "surface": "#ffffff",
+            "primary": "#0094CE",
+            "bgPage": "#eeeeee",
+            "groupBg": "#ffffff",
+            "groupOutline": "#cccccc"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "12px",
+            "groupGap": "12px",
+            "groupBorderRadius": "4px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "20b91985e18bdeb5",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "@flowfuse/node-red-dashboard": "1.30.1"
+        }
+    }
+]
